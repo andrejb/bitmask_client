@@ -47,6 +47,7 @@ from leap.keymanager.errors import KeyNotFound
 from leap.soledad.common.errors import InvalidAuthTokenError
 from leap.soledad.client import Soledad
 from leap.soledad.client.secrets import BootstrapSequenceError
+from leap.soledad.client.sqlcipher import SQLCipherDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -355,6 +356,14 @@ class SoledadBootstrapper(AbstractBootstrapper):
         logger.debug("Using soledad server url: %s" % (server_url,))
         return server_url
 
+    def _is_soledad_syncing(self):
+        lock = SQLCipherDatabase.syncing_lock[self.soledad._db._get_replica_uid()]
+        acquired = lock.acquire(False)
+        if acquired:
+            lock.release()
+            return False
+        return True
+
     def _do_soledad_sync(self):
         """
         Do several retries to get an initial soledad sync.
@@ -368,7 +377,7 @@ class SoledadBootstrapper(AbstractBootstrapper):
             try:
                 logger.debug("Trying to sync soledad....")
                 self._try_soledad_sync()
-                while self.soledad.syncing:
+                while self._is_soledad_syncing():
                     time.sleep(step)
                     wait += step
                     if wait >= max_wait:
@@ -436,8 +445,7 @@ class SoledadBootstrapper(AbstractBootstrapper):
                 local_db_path=local_db_path.encode(encoding),
                 server_url=server_url,
                 cert_file=cert_file.encode(encoding),
-                auth_token=auth_token,
-                defer_encryption=True)
+                auth_token=auth_token)
 
         # XXX All these errors should be handled by soledad itself,
         # and return a subclass of SoledadInitializationFailed
@@ -463,9 +471,7 @@ class SoledadBootstrapper(AbstractBootstrapper):
         """
         try:
             logger.debug("BOOTSTRAPPER: trying to sync Soledad....")
-            # pass defer_decryption=False to get inline decryption
-            # for debugging.
-            self._soledad.sync(defer_decryption=True)
+            self._soledad.sync()
         except SSLError as exc:
             logger.error("%r" % (exc,))
             raise SoledadSyncError("Failed to sync soledad")
